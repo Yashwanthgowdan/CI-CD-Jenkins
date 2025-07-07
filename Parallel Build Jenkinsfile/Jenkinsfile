@@ -1,0 +1,68 @@
+pipeline {
+    agent any
+
+    environment {
+        REPO = "https://github.com/Yashwanthgowdan/CI-CD-Jenkins.git"
+        DOCKERHUB_CREDS = credentials('dockerhub-creds')
+        DOCKER_IMAGE = 'yashwanthgowdan/yashwanth-docker-jenkins'
+        SSH_cred_ID = "Yashwanth"
+        EC2_USERNAME = "ubuntu"
+        EC2_IP = "44.251.126.182"
+    }
+
+    stages {
+        stage('Checkout code') {
+            steps {
+                git branch: 'main', url: "${REPO}"
+            }
+        }
+
+        stage('Parallel build') {
+            parallel {
+                stage('Build Docker Image') {
+                    steps {
+                        script {
+                            docker.build("${DOCKER_IMAGE}:latest")
+                        }
+                    }
+                }
+
+                stage('Push to Docker Hub') {
+                    steps {
+                        script {
+                            docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
+                                docker.image("${DOCKER_IMAGE}:latest").push()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to EC2') {
+            steps {
+                script {
+                    sshagent(credentials: ["${SSH_cred_ID}"]) {
+                        sh """
+                        ssh -o StrictHostKeyChecking=no ${EC2_USERNAME}@${EC2_IP} '
+                            docker pull ${DOCKER_IMAGE}:latest &&
+                            docker stop flask-app || true &&
+                            docker rm flask-app || true &&
+                            docker run -d -p 80:5000 --name flask-app ${DOCKER_IMAGE}:latest
+                        '
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Deployment successful!"
+        }
+        failure {
+            echo "❌ Deployment failed!"
+        }
+    }
+}
